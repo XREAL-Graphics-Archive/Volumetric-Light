@@ -21,19 +21,27 @@ public class VolumetricLightScattering : ScriptableRendererFeature
 {
     class LightScatteringPass : ScriptableRenderPass
     {
+        // reference to camera color target
+        private RenderTargetIdentifier cameraColorTargetIdent;
+        
         // filtering settings: indicates which render queue range is allowed.
         // opaque, transparent or all
         private FilteringSettings filteringSettings = new FilteringSettings(RenderQueueRange.opaque);
+        
         // list of shader tag ids to keep track of
         private readonly List<ShaderTagId> shaderTagIdList = new List<ShaderTagId>();
+        
         // create RenderTargetHandle to create a texture
         private readonly RenderTargetHandle occluders = RenderTargetHandle.CameraTarget;
-        // defined in settings
+        
+        // properties defined in settings
         private readonly float resolutionScale; // resolution scale
         private readonly float intensity; // effect intensity
         private readonly float blurWidth; // radial blur width
-
-        private readonly Material occludersMaterial;
+        
+        // material references
+        private readonly Material occludersMaterial; // occluders material for override
+        private readonly Material radialBlurMaterial; // radial blur material instance
         
         // declare a constructor to initialize render pass variables
         // inject feature class settings instance
@@ -45,13 +53,18 @@ public class VolumetricLightScattering : ScriptableRendererFeature
             blurWidth = settings.blurWidth;
 
             occludersMaterial = new Material(Shader.Find("Hidden/UnlitColor"));
+            radialBlurMaterial = new Material(Shader.Find("Hidden/RadialBlur"));
             
             // occluder shaders that can potentially block the light source
             shaderTagIdList.Add(new ShaderTagId("UniversalForward"));
             shaderTagIdList.Add(new ShaderTagId("UniversalForwardOnly"));
             shaderTagIdList.Add(new ShaderTagId("LightweightForward"));
             shaderTagIdList.Add(new ShaderTagId("SRPDefaultUnlit"));
+        }
 
+        public void SetCameraColorTarget(RenderTargetIdentifier cameraColorTargetIdentifier)
+        {
+            this.cameraColorTargetIdent = cameraColorTargetIdentifier;
         }
 
         // This method is called before executing the render pass.
@@ -100,7 +113,7 @@ public class VolumetricLightScattering : ScriptableRendererFeature
         public override void Execute(ScriptableRenderContext context, ref RenderingData renderingData)
         {
             // Stop rendering pass if material is missing
-            if (!occludersMaterial) return;
+            if (!occludersMaterial || !radialBlurMaterial) return;
 
             // Issue graphic commands via CommandBuffer
             // CommandBufferPool is just a collection of pre-created command buffers that are ready to use.
@@ -135,6 +148,30 @@ public class VolumetricLightScattering : ScriptableRendererFeature
                 // It needs to know which objects are currently visible with culling results.
                 // Drawing settings and filtering settings must also be supplied.
                 context.DrawRenderers(renderingData.cullResults, ref drawSettings, ref filteringSettings);
+
+                // get a reference to sun from RenderSettings
+                Vector3 sunDirectionWorldSpace = RenderSettings.sun.transform.forward;
+                // get camera position
+                Vector3 cameraPositionWorldSpace = camera.transform.position;
+                // unit vector that goes from camera towards the sun.
+                // use this for sun position
+                Vector3 sunPositionWorldSpace = cameraPositionWorldSpace + sunDirectionWorldSpace;
+                // shader expects a viewport space position.
+                // convert world space positions to viewport space.
+                Vector3 sunPositionViewportSpace = camera.WorldToViewportPoint(sunPositionWorldSpace);
+                
+                // pass data to shader
+                // only x and y components of sunPositionViewportSpace are needed
+                // since it represents pixel position of screen
+                radialBlurMaterial.SetVector("_Center", 
+                    new Vector4(sunPositionViewportSpace.x, sunPositionViewportSpace.y, 0, 0));
+                radialBlurMaterial.SetFloat("_Intensity", intensity);
+                radialBlurMaterial.SetFloat("_BlurWidth", blurWidth);
+
+                // blur the occluders map.
+                // Blit() copies a source texture into a destination texture using a shader.
+                // Executes shader with occluders as source texture, then stores output in camera color target.
+                Blit(cmd, occluders.Identifier(), cameraColorTargetIdent, radialBlurMaterial);
             }
             
             // After adding all commands to the CommandBuffer, schedule it for execution and release it.
@@ -186,5 +223,8 @@ public class VolumetricLightScattering : ScriptableRendererFeature
     public override void AddRenderPasses(ScriptableRenderer renderer, ref RenderingData renderingData)
     {
         renderer.EnqueuePass(m_ScriptablePass);
+        
+        // pass camera color target to render pass, required by Blit()
+        m_ScriptablePass.SetCameraColorTarget(renderer.cameraColorTarget);
     }
 }
