@@ -21,6 +21,11 @@ public class VolumetricLightScattering : ScriptableRendererFeature
 {
     class LightScatteringPass : ScriptableRenderPass
     {
+        // filtering settings: indicates which render queue range is allowed.
+        // opaque, transparent or all
+        private FilteringSettings filteringSettings = new FilteringSettings(RenderQueueRange.opaque);
+        // list of shader tag ids to keep track of
+        private readonly List<ShaderTagId> shaderTagIdList = new List<ShaderTagId>();
         // create RenderTargetHandle to create a texture
         private readonly RenderTargetHandle occluders = RenderTargetHandle.CameraTarget;
         // defined in settings
@@ -28,6 +33,8 @@ public class VolumetricLightScattering : ScriptableRendererFeature
         private readonly float intensity; // effect intensity
         private readonly float blurWidth; // radial blur width
 
+        private readonly Material occludersMaterial;
+        
         // declare a constructor to initialize render pass variables
         // inject feature class settings instance
         public LightScatteringPass(VolumetricLightScatteringSettings settings)
@@ -36,6 +43,15 @@ public class VolumetricLightScattering : ScriptableRendererFeature
             resolutionScale = settings.resolutionScale;
             intensity = settings.intensity;
             blurWidth = settings.blurWidth;
+
+            occludersMaterial = new Material(Shader.Find("Hidden/UnlitColor"));
+            
+            // occluder shaders that can potentially block the light source
+            shaderTagIdList.Add(new ShaderTagId("UniversalForward"));
+            shaderTagIdList.Add(new ShaderTagId("UniversalForwardOnly"));
+            shaderTagIdList.Add(new ShaderTagId("LightweightForward"));
+            shaderTagIdList.Add(new ShaderTagId("SRPDefaultUnlit"));
+
         }
 
         // This method is called before executing the render pass.
@@ -83,13 +99,54 @@ public class VolumetricLightScattering : ScriptableRendererFeature
         // Called every frame to run the rendering logic
         public override void Execute(ScriptableRenderContext context, ref RenderingData renderingData)
         {
+            // Stop rendering pass if material is missing
+            if (!occludersMaterial) return;
+
+            // Issue graphic commands via CommandBuffer
+            // CommandBufferPool is just a collection of pre-created command buffers that are ready to use.
+            // You can request one using Get().
+            CommandBuffer cmd = CommandBufferPool.Get();
+
+            // Wrap the graphic commands inside a ProfilingScope,
+            // which ensures that FrameDebugger can profile the code.
+            using (new ProfilingScope(cmd, 
+                       new ProfilingSampler("VolumetricLightScattering")))
+            {
+                // prepare the CommandBuffer so commands can be added
+                context.ExecuteCommandBuffer(cmd);
+                cmd.Clear();
+
+                // RenderingData provides information about the scene.
+                Camera camera = renderingData.cameraData.camera; // get camera reference from RenderingData
+                context.DrawSkybox(camera); // DrawSkybox needs a reference to the camera.
+
+                // Describe how to sort objects and which shader passes are allowed.
+                DrawingSettings drawSettings = 
+                    CreateDrawingSettings(
+                        shaderTagIdList, // list of shader passes
+                        ref renderingData, // reference to RenderingData
+                        SortingCriteria.CommonOpaque // Sorting criteria for visible objects
+                    );
+
+                // Replace the object's materials with occludersMaterial
+                drawSettings.overrideMaterial = occludersMaterial;
+                
+                // DrawRenderers handles the acutal draw call.
+                // It needs to know which objects are currently visible with culling results.
+                // Drawing settings and filtering settings must also be supplied.
+                context.DrawRenderers(renderingData.cullResults, ref drawSettings, ref filteringSettings);
+            }
             
+            // After adding all commands to the CommandBuffer, schedule it for execution and release it.
+            context.ExecuteCommandBuffer(cmd);
+            CommandBufferPool.Release(cmd);
         }
 
-        // Cleanup any allocated resources that were created during the execution of this render pass.
+        // Clean up any allocated resources that were created during the execution of this render pass.
         public override void OnCameraCleanup(CommandBuffer cmd)
         {
-            
+            // Clean up resources allocated when executing this render pass.
+            cmd.ReleaseTemporaryRT(occluders.id);
         }
 
         // Before you execute the render pass to configure render targets,
@@ -131,5 +188,3 @@ public class VolumetricLightScattering : ScriptableRendererFeature
         renderer.EnqueuePass(m_ScriptablePass);
     }
 }
-
-
