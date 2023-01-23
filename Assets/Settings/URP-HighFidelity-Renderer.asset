@@ -13,7 +13,10 @@ MonoBehaviour:
   m_Name: VolumetricLightScattering
   m_EditorClassIdentifier: 
   m_Active: 1
-  settings: {fileID: 0}
+  settings:
+    resolutionScale: 0.5
+    intensity: 1
+    blurWidth: 0.85
 --- !u!114 &11400000
 MonoBehaviour:
   m_ObjectHideFlags: 0
