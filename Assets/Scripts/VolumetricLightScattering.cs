@@ -30,6 +30,10 @@ public class VolumetricLightScattering : ScriptableRendererFeature
         
         // list of shader tag ids to keep track of
         private readonly List<ShaderTagId> shaderTagIdList = new List<ShaderTagId>();
+
+        private static readonly int _centerID = Shader.PropertyToID("_Center");
+        private static readonly int _intensityID = Shader.PropertyToID("_Intensity");
+        private static readonly int _blurWidthID = Shader.PropertyToID("_BlurWidth");
         
         // create RenderTargetHandle to create a texture
         private readonly RenderTargetHandle occluders = RenderTargetHandle.CameraTarget;
@@ -163,10 +167,10 @@ public class VolumetricLightScattering : ScriptableRendererFeature
                 // pass data to shader
                 // only x and y components of sunPositionViewportSpace are needed
                 // since it represents pixel position of screen
-                radialBlurMaterial.SetVector("_Center", 
+                radialBlurMaterial.SetVector(_centerID, 
                     new Vector4(sunPositionViewportSpace.x, sunPositionViewportSpace.y, 0, 0));
-                radialBlurMaterial.SetFloat("_Intensity", intensity);
-                radialBlurMaterial.SetFloat("_BlurWidth", blurWidth);
+                radialBlurMaterial.SetFloat(_intensityID, intensity);
+                radialBlurMaterial.SetFloat(_blurWidthID, blurWidth);
 
                 // blur the occluders map.
                 // Blit() copies a source texture into a destination texture using a shader.
