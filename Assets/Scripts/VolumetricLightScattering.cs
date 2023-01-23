@@ -19,8 +19,25 @@ public class VolumetricLightScatteringSettings
 
 public class VolumetricLightScattering : ScriptableRendererFeature
 {
-    class CustomRenderPass : ScriptableRenderPass
+    class LightScatteringPass : ScriptableRenderPass
     {
+        // create RenderTargetHandle to create a texture
+        private readonly RenderTargetHandle occluders = RenderTargetHandle.CameraTarget;
+        // defined in settings
+        private readonly float resolutionScale; // resolution scale
+        private readonly float intensity; // effect intensity
+        private readonly float blurWidth; // radial blur width
+
+        // declare a constructor to initialize render pass variables
+        // inject feature class settings instance
+        public LightScatteringPass(VolumetricLightScatteringSettings settings)
+        {
+            occluders.Init("_OccludersMap");
+            resolutionScale = settings.resolutionScale;
+            intensity = settings.intensity;
+            blurWidth = settings.blurWidth;
+        }
+
         // This method is called before executing the render pass.
         // It can be used to configure render targets and their clear state. Also to create temporary render target textures.
         // When empty this render pass will render to the active camera render target.
@@ -28,7 +45,34 @@ public class VolumetricLightScattering : ScriptableRendererFeature
         // The render pipeline will ensure target setup and clearing happens in a performant manner.
         public override void OnCameraSetup(CommandBuffer cmd, ref RenderingData renderingData)
         {
+            // create an off-screen texture to store the silhouettes of all the objects that occlude the light source.
             
+            // get a copy of the current camera's RenderTextureDescriptor.
+            // This descriptor contains all the information needed to create a new texture.
+            RenderTextureDescriptor cameraTextureDescriptor = renderingData.cameraData.cameraTargetDescriptor;
+            
+            // Disable depth buffer. (Not used)
+            cameraTextureDescriptor.depthBufferBits = 0;
+            
+            // scale texture dimensions by resolutionScale
+            cameraTextureDescriptor.width = Mathf.RoundToInt(cameraTextureDescriptor.width * resolutionScale);
+            cameraTextureDescriptor.height = Mathf.RoundToInt(cameraTextureDescriptor.height * resolutionScale);
+            
+            // create a new texture.
+            // The first parameter is the ID of occluders.
+            // The second parameter is the texture configuration from the descriptor created and
+            // the third is the texture filtering mode.
+            // https://docs.unity3d.com/ScriptReference/Rendering.CommandBuffer.GetTemporaryRT.html
+            cmd.GetTemporaryRT(occluders.id, cameraTextureDescriptor, FilterMode.Bilinear);
+            
+            // finish configuration with RenderTargetIdentifier
+            ConfigureTarget(occluders.Identifier());
+            
+            // *** NOTE ***
+            // It’s important to understand that you issue all rendering commands through a CommandBuffer.
+            // You set up the commands you want to execute and then hand them over to the scriptable render pipeline
+            // to actually run them. You should NEVER call CommandBuffer.SetRenderTarget().
+            // Instead, call ConfigureTarget() and ConfigureClear().
         }
 
         // Here you can implement the rendering logic.
@@ -63,7 +107,7 @@ public class VolumetricLightScattering : ScriptableRendererFeature
         // }
     }
 
-    CustomRenderPass m_ScriptablePass;
+    LightScatteringPass m_ScriptablePass;
 
     public VolumetricLightScatteringSettings settings = new VolumetricLightScatteringSettings();
 
@@ -71,10 +115,11 @@ public class VolumetricLightScattering : ScriptableRendererFeature
     // Use it to create and configure all ScriptableRenderPass instances.
     public override void Create()
     {
-        m_ScriptablePass = new CustomRenderPass();
+        // pass constructor, inject settings as argument
+        m_ScriptablePass = new LightScatteringPass(settings);
 
         // Configures where the render pass should be injected.
-        m_ScriptablePass.renderPassEvent = RenderPassEvent.AfterRenderingOpaques;
+        m_ScriptablePass.renderPassEvent = RenderPassEvent.BeforeRenderingPostProcessing;
     }
 
     // Here you can inject one or multiple render passes in the renderer.
